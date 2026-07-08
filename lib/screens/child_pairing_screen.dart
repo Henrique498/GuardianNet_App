@@ -55,11 +55,22 @@ class _ChildPairingScreenState extends State<ChildPairingScreen> {
     });
 
     try {
+      // LOG DE DIAGNÓSTICO: O que o app está tentando enviar
+      debugPrint('--- INICIANDO REQUISIÇÃO DE PAREAMENTO ---');
+      debugPrint('URL: $baseUrl/redeem');
+      debugPrint('Payload enviado: {"codigo": "$codigo", "nome": "$nome"}');
+
       final resp = await http.post(
         Uri.parse('$baseUrl/redeem'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'codigo': codigo, 'nome': nome}),
       );
+
+      // LOG DE DIAGNÓSTICO: Resposta bruta do servidor
+      debugPrint('STATUS CODE DO SERVIDOR: ${resp.statusCode}');
+      debugPrint('CORPO DA RESPOSTA (RAW BODY): ${resp.body}');
+      debugPrint('---------------------------------------');
+
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
 
       if (resp.statusCode == 201 && data['ok'] == true) {
@@ -73,10 +84,18 @@ class _ChildPairingScreenState extends State<ChildPairingScreen> {
         HapticFeedback.mediumImpact();
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomeShell()));
       } else {
-        setState(() => errorMsg = data['error']?.toString() ?? 'Código inválido. Confira e tente de novo.');
+        // Se houver um erro detalhado enviado pelo servidor, ele prioriza. Caso contrário, mostra o texto padrão.
+        setState(() {
+          errorMsg = data['error']?.toString() ?? 'Código inválido ou expirado. Confira e tente de novo.';
+        });
       }
-    } catch (_) {
-      setState(() => errorMsg = 'Sem conexão. Verifique sua internet.');
+    } catch (e, stackTrace) {
+      // LOG DE DIAGNÓSTICO: Se o Flutter falhar antes de bater na API ou der timeout
+      debugPrint('ERRO CAPTURADO NO CATCH: $e');
+      debugPrint('STACKTRACE DO ERRO: $stackTrace');
+      debugPrint('---------------------------------------');
+
+      setState(() => errorMsg = 'Sem conexão ou erro interno: $e');
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -87,34 +106,49 @@ class _ChildPairingScreenState extends State<ChildPairingScreen> {
     return SizedBox(
       width: 44,
       height: 54,
-      child: TextField(
-        controller: digitCtrls[index],
-        focusNode: digitNodes[index],
-        textAlign: TextAlign.center,
-        keyboardType: TextInputType.number,
-        maxLength: 1,
-        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-        decoration: InputDecoration(
-          counterText: '',
-          filled: true,
-          fillColor: theme.primaryColor.withOpacity(0.06),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: theme.primaryColor.withOpacity(0.25)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: theme.primaryColor, width: 2),
-          ),
-        ),
-        onChanged: (v) {
-          if (v.isNotEmpty && index < 5) {
-            digitNodes[index + 1].requestFocus();
-          } else if (v.isEmpty && index > 0) {
-            digitNodes[index - 1].requestFocus();
+      child: KeyboardListener(
+        focusNode: FocusNode(), // Captura eventos de tecla física/virtual
+        onKeyEvent: (KeyEvent event) {
+          // Detecta o botão de apagar (Backspace) para voltar o quadradinho caso esteja vazio
+          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.backspace) {
+            if (digitCtrls[index].text.isEmpty && index > 0) {
+              digitCtrls[index - 1].clear();
+              digitNodes[index - 1].requestFocus();
+            }
           }
-          if (errorMsg != null) setState(() => errorMsg = null);
         },
+        child: TextField(
+          controller: digitCtrls[index],
+          focusNode: digitNodes[index],
+          textAlign: TextAlign.center,
+          keyboardType: TextInputType.text, // Permite visualizar melhor números/letras se a fonte mudar
+          textCapitalization: TextCapitalization.characters,
+          inputFormatters: [
+            LengthLimitingTextInputFormatter(1),
+            UpperCaseTextFormatter(), // Garante que tudo digitado fique em caixa alta interna
+          ],
+          maxLength: 1,
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          decoration: InputDecoration(
+            counterText: '',
+            filled: true,
+            fillColor: theme.primaryColor.withOpacity(0.06),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: theme.primaryColor.withOpacity(0.25)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: theme.primaryColor, width: 2),
+            ),
+          ),
+          onChanged: (v) {
+            if (v.isNotEmpty && index < 5) {
+              digitNodes[index + 1].requestFocus();
+            }
+            if (errorMsg != null) setState(() => errorMsg = null);
+          },
+        ),
       ),
     );
   }
@@ -221,6 +255,17 @@ class _ChildPairingScreenState extends State<ChildPairingScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// Formatador auxiliar para forçar caixa alta se necessário
+class UpperCaseTextFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    return TextEditingValue(
+      text: newValue.text.toUpperCase(),
+      selection: newValue.selection,
     );
   }
 }

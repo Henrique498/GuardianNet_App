@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:convert';
 import 'home_shell.dart';
+import 'child_pairing_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -28,7 +29,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void dispose() {
     emailCtlr.dispose();
-    passCtlr.dispose();7
+    passCtlr.dispose();
     super.dispose();
   }
 
@@ -88,6 +89,13 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  void _abrirPareamentoCrianca() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ChildPairingScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -132,7 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // Campo de e-mail (estava faltando)
+                // Campo de e-mail
                 TextFormField(
                   controller: emailCtlr,
                   keyboardType: TextInputType.emailAddress,
@@ -231,6 +239,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                     ),
                   ),
+                ),
+
+                // Acesso da criança via código de pareamento (sem email/senha)
+                TextButton(
+                  onPressed: loading ? null : _abrirPareamentoCrianca,
+                  child: const Text('Sou uma criança, tenho um código'),
                 ),
               ],
             ),

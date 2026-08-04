@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/mock_data.dart';
 import '../widgets/alert_card.dart';
+import '../services/ia_service.dart';
 
 class AlertsScreen extends StatefulWidget {
   const AlertsScreen({super.key});
@@ -10,6 +11,77 @@ class AlertsScreen extends StatefulWidget {
 
 class _AlertsScreenState extends State<AlertsScreen> {
   String filter = "Todos";
+
+  void _abrirModalTesteIA(BuildContext context) {
+    final controller = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.psychology, color: Color(0xFF3B82F6)),
+            SizedBox(width: 8),
+            Text('Testar IA (River)'),
+          ],
+        ),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: 'Digite uma mensagem para analisar...',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final texto = controller.text.trim();
+              if (texto.isEmpty) return;
+
+              final resultado = await IAService.analisarMensagem(texto);
+              Navigator.pop(ctx);
+
+              if (resultado != null) {
+                final isPredator = resultado['is_predator'] ?? false;
+                final score = ((resultado['score_ia'] ?? 0.0) as num) * 100;
+
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: Text(isPredator ? '⚠️ ALERTA DE RISCO' : '✅ MENSAGEM SEGURA'),
+                    content: Text(
+                      'Resultado: ${isPredator ? "Risco de Grooming" : "Normal"}\n'
+                          'Probabilidade da IA: ${score.toStringAsFixed(1)}%\n'
+                          'Modelo: ${resultado['modelo'] ?? 'River'}',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('OK'),
+                      )
+                    ],
+                  ),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    backgroundColor: Colors.red,
+                    content: Text('Erro ao conectar com o backend.'),
+                  ),
+                );
+              }
+            },
+            child: const Text('Analisar'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +95,6 @@ class _AlertsScreenState extends State<AlertsScreen> {
     if (filter == "Atenção") filtered = all.where((a) => a.level == AlertLevel.atencao).toList();
     if (filter == "Seguro") filtered = all.where((a) => a.level == AlertLevel.seguro).toList();
 
-    // separa "hoje" (5min, 32min, 2h) de "ontem" pelo texto, só pra exemplo visual
     final hoje = filtered.where((a) => a.time.contains("min") || a.time.contains("2h")).toList();
     final ontem = filtered.where((a) => !(a.time.contains("min") || a.time.contains("2h"))).toList();
 
@@ -32,7 +103,17 @@ class _AlertsScreenState extends State<AlertsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Histórico de Alertas", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Histórico de Alertas", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22)),
+              IconButton(
+                icon: const Icon(Icons.psychology, color: Color(0xFF3B82F6)),
+                tooltip: 'Testar IA',
+                onPressed: () => _abrirModalTesteIA(context),
+              ),
+            ],
+          ),
           const SizedBox(height: 14),
           Row(
             children: [

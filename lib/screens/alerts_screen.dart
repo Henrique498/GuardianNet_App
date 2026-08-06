@@ -73,14 +73,15 @@ class _AlertsScreenState extends State<AlertsScreen> {
     final score = ((resultado['score_ia'] ?? 0.0) as num) * 100;
     final nivel = (resultado['nivel'] ?? '').toString();
 
+    // ↓↓↓ Declaradas AQUI FORA, uma única vez — não dentro do builder.
+    bool enviando = false;
+    String? feedbackMsg;
+    bool feedbackErro = false;
+
     showDialog(
       context: context,
       builder: (dialogCtx) => StatefulBuilder(
         builder: (dialogCtx, setDialogState) {
-          bool enviando = false;
-          String? feedbackMsg;
-          bool feedbackErro = false;
-
           Future<void> enviar(bool valorCorreto) async {
             setDialogState(() => enviando = true);
             final resultadoFeedback = await IAService.aprender(texto, valorCorreto);
@@ -135,13 +136,11 @@ class _AlertsScreenState extends State<AlertsScreen> {
               TextButton.icon(
                 icon: const Icon(Icons.check, size: 18, color: Colors.green),
                 label: const Text('Certo'),
-                // Confirma: o valor correto é o mesmo que a IA já disse.
                 onPressed: enviando ? null : () => enviar(isPredator),
               ),
               TextButton.icon(
                 icon: const Icon(Icons.close, size: 18, color: Colors.red),
                 label: const Text('Errado'),
-                // Corrige: o valor correto é o oposto do que a IA disse.
                 onPressed: enviando ? null : () => enviar(!isPredator),
               ),
               TextButton(

@@ -47,26 +47,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
               Navigator.pop(ctx);
 
               if (resultado != null) {
-                final isPredator = resultado['is_predator'] ?? false;
-                final score = ((resultado['score_ia'] ?? 0.0) as num) * 100;
-
-                showDialog(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: Text(isPredator ? '⚠️ ALERTA DE RISCO' : '✅ MENSAGEM SEGURA'),
-                    content: Text(
-                      'Resultado: ${isPredator ? "Risco de Grooming" : "Normal"}\n'
-                          'Probabilidade da IA: ${score.toStringAsFixed(1)}%\n'
-                          'Modelo: ${resultado['modelo'] ?? 'River'}',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('OK'),
-                      )
-                    ],
-                  ),
-                );
+                _mostrarResultadoComFeedback(context, texto, resultado);
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -79,6 +60,97 @@ class _AlertsScreenState extends State<AlertsScreen> {
             child: const Text('Analisar'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _mostrarResultadoComFeedback(
+      BuildContext context,
+      String texto,
+      Map<String, dynamic> resultado,
+      ) {
+    final isPredator = resultado['is_predator'] ?? false;
+    final score = ((resultado['score_ia'] ?? 0.0) as num) * 100;
+    final nivel = (resultado['nivel'] ?? '').toString();
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) {
+          bool enviando = false;
+          String? feedbackMsg;
+          bool feedbackErro = false;
+
+          Future<void> enviar(bool valorCorreto) async {
+            setDialogState(() => enviando = true);
+            final resultadoFeedback = await IAService.aprender(texto, valorCorreto);
+            setDialogState(() {
+              enviando = false;
+              if (resultadoFeedback['sucesso'] == true) {
+                feedbackErro = false;
+                feedbackMsg = 'Obrigado! A IA aprendeu com esse exemplo.';
+              } else if (resultadoFeedback['erroPlanoNecessario'] == true) {
+                feedbackErro = true;
+                feedbackMsg = 'Esse recurso é exclusivo para assinantes (plano Básico ou superior).';
+              } else {
+                feedbackErro = true;
+                feedbackMsg = 'Não foi possível salvar o feedback agora.';
+              }
+            });
+          }
+
+          return AlertDialog(
+            title: Text(isPredator ? '⚠️ ALERTA DE RISCO' : '✅ MENSAGEM SEGURA'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Nível: ${nivel.isEmpty ? "—" : nivel}\n'
+                      'Probabilidade da IA: ${score.toStringAsFixed(1)}%\n'
+                      'Modelo: ${resultado['modelo'] ?? 'River'}',
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Essa classificação está correta?',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                if (feedbackMsg != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    feedbackMsg!,
+                    style: TextStyle(
+                      color: feedbackErro ? Colors.red : Colors.green,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+                if (enviando) ...[
+                  const SizedBox(height: 12),
+                  const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton.icon(
+                icon: const Icon(Icons.check, size: 18, color: Colors.green),
+                label: const Text('Certo'),
+                // Confirma: o valor correto é o mesmo que a IA já disse.
+                onPressed: enviando ? null : () => enviar(isPredator),
+              ),
+              TextButton.icon(
+                icon: const Icon(Icons.close, size: 18, color: Colors.red),
+                label: const Text('Errado'),
+                // Corrige: o valor correto é o oposto do que a IA disse.
+                onPressed: enviando ? null : () => enviar(!isPredator),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogCtx),
+                child: const Text('Fechar'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

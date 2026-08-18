@@ -14,7 +14,7 @@ Projeto desenvolvido para a segunda fase do Empreenda SENAC. Ainda é um MVP, en
 - Manda alerta pro responsável assim que algo suspeito é detectado
 - Deixa os pais cadastrarem contatos de confiança (família, amigos, professores) pra não gerar alerta à toa
 - Faz o pareamento do celular da criança com um código de 6 dígitos, sem precisar criar e-mail/senha pra ela
-- Tem planos de assinatura (Básico, Premium, Escola) contratados pelo site
+- Tem planos de assinatura (Básico e Premium) contratados pelo site
 - Mostra histórico e relatórios dos alertas
 - Tela própria pra criança, com botão de "Estou bem!" e um SOS pra emergência
 
@@ -34,10 +34,8 @@ Não é só um filtro de palavrão. O processo tem algumas camadas:
 
 1. Primeiro checa se quem mandou a mensagem é um contato de confiança — se for, nem precisa analisar
 2. Depois passa por um dicionário de palavras-chave em português, com peso diferente pra cada categoria de risco (aliciamento, isolamento, manipulação, etc)
-3. Em paralelo, um modelo Naive Bayes (biblioteca River, que aprende aos poucos, sem precisar retreinar do zero) avalia a mensagem — foi treinado em cima do corpus PAN12, que é uma base conhecida de identificação de predadores
+3. Em paralelo, um modelo Naive Bayes (biblioteca River, que aprende aos poucos, sem precisar retreinar do zero) avalia a mensagem — foi treinado em cima do corpus PAN12, que é uma base conhecida de identificação de predadores. Já temos o corpus traduzido pra português, além do original em inglês
 4. No final, vale o pior resultado entre as duas análises, pra não deixar nada passar
-
-Como o PAN12 é em inglês, o detector de palavras-chave em português funciona hoje como um reforço enquanto a gente ainda não termina de traduzir e retreinar o modelo.
 
 ## Tecnologias
 
@@ -45,7 +43,7 @@ Como o PAN12 é em inglês, o detector de palavras-chave em português funciona 
 - Python + Flask (API)
 - PostgreSQL via Supabase
 - River (machine learning incremental)
-- Corpus PAN12 (tradução em andamento com argostranslate)
+- Corpus PAN12 (original em inglês e já traduzido pra português com argostranslate)
 - Render (hospedagem da API) e Vercel (site)
 - Autenticação com token opaco (não é JWT) — dá pra derrubar a sessão de um usuário na hora, o que faz sentido num app pensado pra proteção de criança
 
@@ -53,7 +51,6 @@ Como o PAN12 é em inglês, o detector de palavras-chave em português funciona 
 
 - **Responsável**: cria conta e assina um plano pelo site, depois usa o mesmo login no app
 - **Criança**: entra só com nome + código de pareamento de 6 dígitos
-- **Escola** (ainda não pronto): licença pra toda a instituição
 
 ## Onde está o projeto agora
 
@@ -65,9 +62,8 @@ O que já funciona:
 
 O que falta:
 - Contatos e alertas no app ainda usam dados de exemplo — a API real pra isso ainda não foi construída
-- Tela da conta Escola
 - Ler as mensagens direto do celular via API de Acessibilidade do Android (hoje ainda é manual/simulado)
-- Terminar a tradução do PAN12 e retreinar o modelo em português
+- Retreinar o modelo em cima do corpus já traduzido pra português
 
 ---
 

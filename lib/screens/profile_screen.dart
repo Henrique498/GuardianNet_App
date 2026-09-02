@@ -4,7 +4,9 @@ import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/theme_provider.dart';
-import '../widgets/invite_child_sheet.dart';
+import '../theme/app_theme.dart';
+import 'child_pairing_screen.dart';
+import 'plan_screen.dart';
 import 'login_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -23,12 +25,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool loading = true;
   String? erro;
 
+  // true enquanto os dados exibidos vierem só do cache local (SharedPreferences),
+  // e não da resposta do servidor.
+  bool usandoCache = false;
+
   String nome = '';
   String email = '';
-  String tipo = 'usuario'; // 'usuario' | 'crianca' | 'admin'
+  String tipo = 'usuario';
   String responsavelNome = '';
 
-  Map<String, dynamic>? assinatura; // vem de /subscription/current
+  Map<String, dynamic>? assinatura;
 
   @override
   void initState() {
@@ -43,335 +49,361 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return (partes.first.substring(0, 1) + partes.last.substring(0, 1)).toUpperCase();
   }
 
-  String _formatarData(String? iso) {
-    if (iso == null || iso.isEmpty) return '';
-    try {
-      final d = DateTime.parse(iso).toLocal();
-      final dia = d.day.toString().padLeft(2, '0');
-      final mes = d.month.toString().padLeft(2, '0');
-      return '$dia/$mes/${d.year}';
-    } catch (_) {
-      return '';
-    }
-  }
-
-  String _capitalizar(String v) => v.isEmpty ? v : v[0].toUpperCase() + v.substring(1);
-
-  Future<void> _irParaLogin() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    if (!mounted) return;
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-    );
+  String _capitalizar(String text) {
+    if (text.isEmpty) return text;
+    return text[0].toUpperCase() + text.substring(1);
   }
 
   Future<void> _carregarPerfil() async {
-    setState(() {
-      loading = true;
-      erro = null;
-    });
+    final prefs = await SharedPreferences.getInstance();
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('gn_token') ?? '';
-      final tipoSalvo = prefs.getString('gn_tipo') ?? 'usuario';
+    // 1. Lê TODO o cache salvo localmente
+    final nomeCache = prefs.getString('gn_nome') ?? '';
+    final emailCache = prefs.getString('gn_email') ?? '';
+    final tipoCache = prefs.getString('gn_tipo') ?? 'usuario';
+    final responsavelCache = prefs.getString('gn_responsavel_nome') ?? '';
 
-      if (token.isEmpty) {
-        await _irParaLogin();
-        return;
-      }
+    // Recupera dados salvos do plano em cache (se houver)
+    final planoNomeCache = prefs.getString('gn_plano_nome');
+    Map<String, dynamic>? assinaturaCache;
+    if (planoNomeCache != null) {
+      assinaturaCache = {'plano': planoNomeCache};
+    }
 
-      // Conta de criança: usamos o que foi salvo no momento do pareamento.
-      if (tipoSalvo == 'crianca') {
-        setState(() {
-          tipo = 'crianca';
-          nome = prefs.getString('gn_nome') ?? 'Você';
-          responsavelNome = prefs.getString('gn_responsavel_nome') ?? '';
-          loading = false;
-        });
-        return;
-      }
+    final temCache = nomeCache.isNotEmpty;
 
-      final meResp = await http.get(
-        Uri.parse('$apiBase/auth/me'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-
-      if (meResp.statusCode == 401) {
-        await _irParaLogin();
-        return;
-      }
-
-      final meData = jsonDecode(meResp.body) as Map<String, dynamic>;
-      if (meResp.statusCode != 200) {
-        setState(() {
-          erro = meData['error']?.toString() ?? 'Não foi possível carregar seu perfil.';
-          loading = false;
-        });
-        return;
-      }
-
-      Map<String, dynamic>? assinaturaData;
-      try {
-        final subResp = await http.get(
-          Uri.parse('$apiBase/subscription/current'),
-          headers: {'Authorization': 'Bearer $token'},
-        );
-        if (subResp.statusCode == 200) {
-          final subJson = jsonDecode(subResp.body) as Map<String, dynamic>;
-          assinaturaData = subJson['assinatura'] as Map<String, dynamic>?;
-        }
-      } catch (_) {
-        // Se a assinatura falhar, o perfil ainda é exibido.
-      }
-
-      if (!mounted) return;
+    // 2. Renderiza os dados do cache IMEDIATAMENTE (zero espera visual)
+    if (mounted) {
       setState(() {
-        tipo = (meData['tipo'] ?? 'usuario').toString();
-        nome = (meData['nome'] ?? '').toString();
-        email = (meData['email'] ?? '').toString();
-        assinatura = assinaturaData;
-        loading = false;
-      });
-
-      await prefs.setString('gn_nome', nome);
-    } catch (_) {
-      setState(() {
-        erro = 'Sem conexão com o servidor. Puxe para tentar novamente.';
-        loading = false;
+        nome = nomeCache;
+        email = emailCache;
+        tipo = tipoCache;
+        responsavelNome = responsavelCache;
+        assinatura = assinaturaCache;
+        usandoCache = true;
+        // Se já tem cache, não mostra tela/spinner de carregamento
+        loading = !temCache;
+        erro = null;
       });
     }
+
+    try {
+      final token = prefs.getString('gn_token') ?? '';
+
+      // 3. Chamadas paralelas da API
+      final resultados = await Future.wait([
+        http.get(
+          Uri.parse('$apiBase/auth/me'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        ),
+        http.get(
+          Uri.parse('$apiBase/subscription/current'),
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      ]).timeout(const Duration(seconds: 10)); // Reduzido para 10s para resposta mais rápida em falhas
+
+      final respMe = resultados[0];
+      final respSub = resultados[1];
+
+      if (respMe.statusCode != 200) {
+        debugPrint('Erro ao carregar /auth/me: status=${respMe.statusCode}');
+        if (mounted) {
+          setState(() {
+            erro = respMe.statusCode == 401
+                ? 'Sua sessão expirou. Entre novamente.'
+                : 'Não foi possível atualizar seu perfil agora.';
+            loading = false;
+          });
+        }
+        return;
+      }
+
+      // Processa dados do perfil (/auth/me)
+      final dataMe = jsonDecode(respMe.body) as Map<String, dynamic>;
+      final novoNome = (dataMe['nome'] ?? nomeCache).toString();
+      final novoEmail = (dataMe['email'] ?? emailCache).toString();
+      final novoTipo = (dataMe['tipo'] ?? tipoCache).toString();
+      final novoResp = (dataMe['responsavelNome'] ?? responsavelCache).toString();
+
+      // Processa dados da assinatura (/subscription/current)
+      Map<String, dynamic>? assinaturaCarregada = assinaturaCache;
+      if (respSub.statusCode == 200) {
+        final dataSub = jsonDecode(respSub.body) as Map<String, dynamic>;
+        assinaturaCarregada = dataSub['assinatura'] as Map<String, dynamic>?;
+      }
+
+      // 4. Salva as informações ATUALIZADAS no cache local (SharedPreferences)
+      await prefs.setString('gn_nome', novoNome);
+      await prefs.setString('gn_email', novoEmail);
+      await prefs.setString('gn_tipo', novoTipo);
+      await prefs.setString('gn_responsavel_nome', novoResp);
+      if (assinaturaCarregada != null && assinaturaCarregada['plano'] != null) {
+        await prefs.setString('gn_plano_nome', assinaturaCarregada['plano'].toString());
+      }
+
+      // 5. Atualiza o estado da tela com os dados novos vindos do servidor
+      if (mounted) {
+        setState(() {
+          nome = novoNome;
+          email = novoEmail;
+          tipo = novoTipo;
+          responsavelNome = novoResp;
+          assinatura = assinaturaCarregada;
+          usandoCache = false;
+          loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Exceção ao carregar perfil: $e');
+      if (mounted) {
+        setState(() {
+          // Se já tinha cache exibido, apenas remove o loading silenciosamente
+          erro = temCache ? null : 'Sem conexão com o servidor.';
+          loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _deslogar() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (route) => false,
+      );
+    }
+  }
+
+  void _abrirPagina(Widget screen, String title) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: AppColors.navy,
+          appBar: AppBar(
+            backgroundColor: AppColors.navy,
+            title: Text(title, style: const TextStyle(color: AppColors.branco)),
+            iconTheme: const IconThemeData(color: AppColors.branco),
+          ),
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: screen,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final themeProvider = context.watch<ThemeProvider>();
+    final themeProv = Provider.of<ThemeProvider>(context);
 
     if (loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.azulPastel),
+      );
     }
 
-    if (erro != null) {
-      return RefreshIndicator(
-        onRefresh: _carregarPerfil,
-        child: ListView(
-          padding: const EdgeInsets.all(24),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (erro != null) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.perigo.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.perigo.withOpacity(0.3)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.error_outline, color: AppColors.perigo, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(erro!, style: const TextStyle(color: AppColors.perigo, fontSize: 12.5)),
+                ),
+                TextButton(
+                  onPressed: _carregarPerfil,
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero),
+                  child: const Text('Tentar de novo', style: TextStyle(color: AppColors.azulPastel, fontSize: 12.5)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+        GlassCard(
+          child: Row(
+            children: [
+              InitialsAvatar(initials: _iniciais, size: 54),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      nome.isNotEmpty ? nome : 'Usuário',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.branco),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      email.isNotEmpty
+                          ? email
+                          : (usandoCache ? 'E-mail não disponível offline' : 'Sem e-mail'),
+                      style: TextStyle(fontSize: 12.5, color: AppColors.brancoDim),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.navy3,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        tipo == 'crianca' ? 'Perfil Infantil' : 'Responsável',
+                        style: const TextStyle(fontSize: 11, color: AppColors.azulPastel, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildPlanoCard(),
+        const SizedBox(height: 20),
+        LabelCaps('Configurações de Notificação'),
+        const SizedBox(height: 10),
+        GlassCard(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          child: Column(
+            children: [
+              SwitchListTile(
+                title: const Text('Notificações Push', style: TextStyle(color: AppColors.branco, fontSize: 13.5)),
+                value: pushAlerts,
+                activeThumbColor: AppColors.azulPastel,
+                onChanged: (v) => setState(() => pushAlerts = v),
+              ),
+              Divider(color: AppColors.borda, height: 1),
+              SwitchListTile(
+                title: const Text('Resumo Semanal por E-mail', style: TextStyle(color: AppColors.branco, fontSize: 13.5)),
+                value: weeklyEmail,
+                activeThumbColor: AppColors.azulPastel,
+                onChanged: (v) => setState(() => weeklyEmail = v),
+              ),
+              Divider(color: AppColors.borda, height: 1),
+              SwitchListTile(
+                title: const Text('Alertas Críticos via SMS', style: TextStyle(color: AppColors.branco, fontSize: 13.5)),
+                value: smsCritical,
+                activeThumbColor: AppColors.azulPastel,
+                onChanged: (v) => setState(() => smsCritical = v),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        LabelCaps('Aparência'),
+        const SizedBox(height: 10),
+        GlassCard(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          child: SwitchListTile(
+            title: const Text('Modo escuro', style: TextStyle(color: AppColors.branco, fontSize: 13.5)),
+            subtitle: Text('Ativado por padrão no GuardianNet', style: TextStyle(color: AppColors.brancoDim, fontSize: 11.5)),
+            value: themeProv.isDark,
+            activeThumbColor: AppColors.azulPastel,
+            onChanged: (v) => themeProv.toggleTheme(v),
+          ),
+        ),
+        const SizedBox(height: 20),
+        LabelCaps('Ações Rápidas'),
+        const SizedBox(height: 10),
+        Row(
           children: [
-            const SizedBox(height: 60),
-            const Icon(Icons.wifi_off_rounded, size: 40, color: Colors.grey),
-            const SizedBox(height: 12),
-            Text(erro!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
-            const SizedBox(height: 16),
-            Center(
-              child: OutlinedButton(onPressed: _carregarPerfil, child: const Text('Tentar de novo')),
+            Expanded(
+              child: OutlineButtonCustom(
+                text: 'Parear Dispositivo',
+                icon: Icons.link,
+                onPressed: () => _abrirPagina(const PairingScreen(), 'Pareamento'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlineButtonCustom(
+                text: 'Sair da Conta',
+                icon: Icons.logout,
+                color: AppColors.perigo,
+                onPressed: _deslogar,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlanoCard() {
+    if (assinatura == null) {
+      return GlassCard(
+        child: Row(
+          children: [
+            const Icon(Icons.star_border, color: AppColors.brancoDim),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    usandoCache ? 'Plano não disponível offline' : 'Nenhum plano ativo',
+                    style: const TextStyle(color: AppColors.branco),
+                  ),
+                  Text(
+                    usandoCache
+                        ? 'Toque em "Tentar de novo" acima para atualizar'
+                        : 'Assine um plano no site para liberar os recursos',
+                    style: TextStyle(color: AppColors.brancoDim, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       );
     }
 
-    return RefreshIndicator(
-      onRefresh: _carregarPerfil,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
-        children: [
-          const Text("Meu Perfil", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22)),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: theme.primaryColor.withOpacity(0.08), borderRadius: BorderRadius.circular(16)),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: theme.primaryColor.withOpacity(0.2),
-                  child: Text(_iniciais, style: TextStyle(color: theme.primaryColor, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(nome.isEmpty ? 'Usuário' : nome,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      if (tipo == 'crianca')
-                        Text(
-                          responsavelNome.isEmpty
-                              ? 'Conta vinculada a um responsável'
-                              : 'Conectado(a) à conta de $responsavelNome',
-                          style: const TextStyle(fontSize: 13),
-                        )
-                      else if (email.isNotEmpty)
-                        Text(email),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-
-          if (tipo != 'crianca') _buildAssinaturaCard(theme),
-
-          const SizedBox(height: 20),
-          _SectionTitle("NOTIFICAÇÕES"),
-          Card(
-            child: Column(
-              children: [
-                SwitchListTile(
-                  secondary: const Icon(Icons.notifications_active_outlined),
-                  title: const Text("Alertas no app"),
-                  subtitle: const Text("Notificações push em tempo real"),
-                  value: pushAlerts,
-                  onChanged: (v) => setState(() => pushAlerts = v),
-                ),
-                const Divider(height: 1),
-                SwitchListTile(
-                  secondary: const Icon(Icons.public),
-                  title: const Text("E-mail semanal"),
-                  subtitle: const Text("Relatório de atividades"),
-                  value: weeklyEmail,
-                  onChanged: (v) => setState(() => weeklyEmail = v),
-                ),
-                const Divider(height: 1),
-                SwitchListTile(
-                  secondary: const Icon(Icons.sms_outlined),
-                  title: const Text("SMS — alertas críticos"),
-                  subtitle: const Text("Apenas nível Perigo"),
-                  value: smsCritical,
-                  onChanged: (v) => setState(() => smsCritical = v),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _SectionTitle("APARÊNCIA"),
-          Card(
-            child: SwitchListTile(
-              secondary: const Icon(Icons.dark_mode_outlined),
-              title: const Text("Tema escuro"),
-              subtitle: Text(themeProvider.isDark ? "Ativado" : "Desativado"),
-              value: themeProvider.isDark,
-              onChanged: (v) => themeProvider.toggleTheme(v),
-            ),
-          ),
-          const SizedBox(height: 20),
-          _SectionTitle("CONTA"),
-          Card(
-            child: Column(
-              children: [
-                if (tipo != 'crianca') ...[
-                  ListTile(
-                    leading: const Icon(Icons.credit_card),
-                    title: const Text("Gerenciar Assinatura"),
-                    subtitle: Text(assinatura == null ? "Nenhum plano ativo" : "Ver detalhes e faturamento"),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () {},
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.qr_code_2),
-                    title: const Text("Convidar criança"),
-                    subtitle: const Text("Gerar código de acesso"),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => showInviteChildSheet(context),
-                  ),
-                ] else
-                  ListTile(
-                    leading: const Icon(Icons.link),
-                    title: const Text("Conta vinculada"),
-                    subtitle: Text(responsavelNome.isEmpty ? "—" : responsavelNome),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          _SectionTitle("LEGAL E CONFORMIDADE"),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.balance, color: Colors.amber),
-              title: const Text("Lei 15.211/2025"),
-              subtitle: const Text("Marco Legal IA — conformidade"),
-              trailing: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(color: Colors.green.withOpacity(0.15), borderRadius: BorderRadius.circular(20)),
-                child: const Text("Conforme", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12)),
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red)),
-              onPressed: _irParaLogin,
-              child: const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Text("Sair da Conta")),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAssinaturaCard(ThemeData theme) {
-    if (assinatura == null) {
-      return Card(
-        child: ListTile(
-          leading: const Icon(Icons.info_outline, color: Colors.grey),
-          title: const Text("Nenhum plano ativo"),
-          subtitle: const Text("Assine um plano no site para liberar os recursos"),
-        ),
-      );
-    }
-
     final plano = _capitalizar((assinatura!['plano'] ?? '').toString());
-    final periodo = (assinatura!['periodo'] ?? '').toString();
     final status = (assinatura!['status'] ?? '').toString().toLowerCase();
-    final proximaCobranca = _formatarData(assinatura!['nextBillingAt'] as String?);
-    final trialFim = _formatarData(assinatura!['trialEndsAt'] as String?);
-
     final statusLabel = {
       'ativa': 'Ativo',
       'trialing': 'Período de teste',
       'cancelada': 'Cancelado',
       'expirada': 'Expirado',
-    }[status] ?? _capitalizar(status);
+    }[status] ??
+        _capitalizar(status);
 
-    final statusColor = status == 'ativa' || status == 'trialing' ? Colors.amber : Colors.grey;
-
-    String subtitulo;
-    if (status == 'trialing' && trialFim.isNotEmpty) {
-      subtitulo = 'Teste grátis até $trialFim';
-    } else if (proximaCobranca.isNotEmpty) {
-      subtitulo = 'Renova em $proximaCobranca · ${_capitalizar(periodo)}';
-    } else {
-      subtitulo = _capitalizar(periodo);
-    }
-
-    return Card(
-      child: ListTile(
-        leading: Icon(Icons.star, color: statusColor),
-        title: Text("Plano $plano · $statusLabel"),
-        subtitle: Text(subtitulo),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () {},
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => _abrirPagina(const PlanScreen(), 'Plano de Assinatura'),
+      child: GlassCard(
+        child: Row(
+          children: [
+            const Icon(Icons.star, color: AppColors.atencao),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Plano $plano · $statusLabel', style: const TextStyle(color: AppColors.branco, fontSize: 14)),
+            ),
+            const Icon(Icons.chevron_right, color: AppColors.brancoDim),
+          ],
+        ),
       ),
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  final String text;
-  const _SectionTitle(this.text);
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(text, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5, color: Colors.grey)),
     );
   }
 }

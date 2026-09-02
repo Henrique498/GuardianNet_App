@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/mock_data.dart';
-import '../widgets/contact_card.dart';
-import '../widgets/alert_card.dart';
+import '../theme/app_theme.dart';
+import 'alerts_screen.dart';
+
+const _grupos = ["Família", "Escola", "Amigos"];
 
 class DashboardScreen extends StatefulWidget {
   final VoidCallback? onVerTodosAlertas;
-
   const DashboardScreen({super.key, this.onVerTodosAlertas});
 
   @override
@@ -15,315 +15,256 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  String selectedCategory = 'Família';
-  late List<TrustedContact> contacts;
-  String nomeUsuario = '';
+  String nome = '';
+  String grupoSelecionado = 'Família';
 
   @override
   void initState() {
     super.initState();
-    contacts = List.from(MockData.contacts);
     _carregarNome();
   }
 
   Future<void> _carregarNome() async {
     final prefs = await SharedPreferences.getInstance();
-    final nome = prefs.getString('gn_nome') ?? '';
-    if (mounted) setState(() => nomeUsuario = nome);
+    final n = prefs.getString('gn_nome') ?? '';
+    if (mounted) setState(() => nome = n);
   }
 
-  void addContact(String name, String phone, String relation) {
-    HapticFeedback.heavyImpact();
-    setState(() {
-      contacts.add(TrustedContact(
-          name: name, phone: phone, relation: relation, category: selectedCategory));
-    });
-  }
+  @override
+  Widget build(BuildContext context) {
+    final alerts = MockData.alerts;
+    final contacts = MockData.contacts;
+    final children = MockData.children;
+    final critico = alerts.where((a) => a.level == AlertLevel.perigo).isNotEmpty
+        ? alerts.firstWhere((a) => a.level == AlertLevel.perigo)
+        : null;
+    final contatosGrupo = contacts.where((c) => c.category == grupoSelecionado).toList();
+    final primeiroNome = nome.isEmpty ? MockData.parent.name : nome.split(' ').first;
 
-  void showAddDialog() {
-    final nameCtrl = TextEditingController();
-    final phoneCtrl = TextEditingController();
-    final relationCtrl = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 24, right: 24, top: 16),
-        child: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LabelCaps('Bem-vinda de volta'),
+        const SizedBox(height: 4),
+        RichText(
+          text: TextSpan(
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontSize: 26),
             children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Novo Contato ($selectedCategory)',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 20),
-                    onPressed: () => Navigator.pop(ctx),
-                    style: IconButton.styleFrom(backgroundColor: Colors.grey.withOpacity(0.1)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: "Nome completo", prefixIcon: Icon(Icons.person_outline)),
-                validator: (v) => v!.isEmpty ? "Informe o nome" : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: phoneCtrl,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: "WhatsApp / Telefone", prefixIcon: Icon(Icons.phone_outlined)),
-                validator: (v) => v!.isEmpty ? "Informe o telefone" : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: relationCtrl,
-                decoration: const InputDecoration(labelText: "Relação (ex: Mãe, Tio)", prefixIcon: Icon(Icons.label_outline)),
-                validator: (v) => v!.isEmpty ? "Informe o grau de parentesco" : null,
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    if (!formKey.currentState!.validate()) return;
-                    addContact(nameCtrl.text, phoneCtrl.text, relationCtrl.text);
-                    Navigator.pop(ctx);
-                  },
-                  icon: const Icon(Icons.check),
-                  label: const Text('Adicionar à Lista'),
-                ),
-              ),
-              const SizedBox(height: 24),
+              const TextSpan(text: 'Olá, ', style: TextStyle(color: AppColors.branco)),
+              TextSpan(text: primeiroNome, style: const TextStyle(color: AppColors.azulPastel)),
+              const TextSpan(text: ' 👋', style: TextStyle(color: AppColors.branco)),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  void _showAlertDetail(AlertItem a) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.shield, color: Theme.of(context).primaryColor),
-            const SizedBox(width: 8),
-            Text(a.app),
-          ],
-        ),
-        content: Text(a.description),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Entendido")),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final filtered = contacts.where((c) => c.category == selectedCategory).toList();
-    final alertasPerigo = MockData.alerts.where((a) => a.level == AlertLevel.perigo).toList();
-    final primeiroNome = nomeUsuario.isEmpty ? '' : nomeUsuario.split(' ').first;
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  primeiroNome.isEmpty ? "Olá! 👋" : "Olá, $primeiroNome 👋",
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22, letterSpacing: -0.5),
-                ),
-                Text("Aqui está o resumo de hoje", style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 13)),
-              ],
-            ),
-            IconButton(
-              icon: Icon(Icons.settings_outlined, color: theme.colorScheme.onSurfaceVariant),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Configurações do painel em desenvolvimento.")),
-                );
-              },
-            )
-          ],
-        ),
         const SizedBox(height: 20),
 
-        if (alertasPerigo.isNotEmpty) ...[
-          InkWell(
-            onTap: () => _showAlertDetail(alertasPerigo.first),
-            borderRadius: BorderRadius.circular(16),
-            child: Ink(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.errorContainer.withOpacity(0.6),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: theme.colorScheme.error.withOpacity(0.3)),
+        // Status geral
+        GlassCard(
+          glow: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LabelCaps('Status geral'),
+              const SizedBox(height: 8),
+              const Text('Sua família está protegida',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.branco)),
+              const SizedBox(height: 4),
+              Text(
+                '${children.length} dispositivos monitorados pela IA neste momento.',
+                style: TextStyle(fontSize: 13, color: AppColors.brancoDim),
               ),
-              child: Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: theme.colorScheme.onErrorContainer),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      alertasPerigo.length == 1
-                          ? "1 alerta crítico precisa de atenção imediata"
-                          : "${alertasPerigo.length} alertas críticos precisam de atenção",
-                      style: TextStyle(color: theme.colorScheme.onErrorContainer, fontWeight: FontWeight.bold, fontSize: 14),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: children.map((c) {
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: AppColors.navy3.withOpacity(0.7),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: AppColors.borda),
                     ),
+                    child: Text('${c.name}, ${c.age} anos · ${c.status}',
+                        style: const TextStyle(fontSize: 11.5, color: AppColors.branco)),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+        ),
+
+        if (critico != null) ...[
+          const SizedBox(height: 14),
+          InkWell(
+            borderRadius: BorderRadius.circular(22),
+            onTap: () => showAlertDetailSheet(context, critico, onVerTodos: widget.onVerTodosAlertas),
+            child: Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: AppColors.perigo.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: AppColors.perigo.withOpacity(0.4)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.perigo),
+                      const SizedBox(width: 6),
+                      LabelCaps('Alerta crítico', color: AppColors.perigo),
+                    ],
                   ),
-                  Icon(Icons.chevron_right, color: theme.colorScheme.onErrorContainer),
+                  const SizedBox(height: 8),
+                  Text(critico.category, style: const TextStyle(fontSize: 15, color: AppColors.branco)),
+                  const SizedBox(height: 4),
+                  Text(critico.description, style: TextStyle(fontSize: 13, color: AppColors.brancoDim)),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Text('Ver detalhes', style: TextStyle(fontSize: 13, color: AppColors.azulPastel)),
+                      SizedBox(width: 4),
+                      Icon(Icons.arrow_forward, size: 14, color: AppColors.azulPastel),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
         ],
 
-        // Cards de Status Limpos
+        const SizedBox(height: 14),
         Row(
           children: [
-            _StatCard(icon: Icons.people_outline, value: "${contacts.length}", label: "Contatos"),
+            Expanded(
+              child: GlassCard(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.people_outline, size: 20, color: AppColors.azulPastel),
+                    const SizedBox(height: 10),
+                    Text('${contacts.length}',
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.branco)),
+                    Text('Contatos confiáveis', style: TextStyle(fontSize: 11.5, color: AppColors.brancoDim)),
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(width: 12),
-            _StatCard(icon: Icons.notifications_none, value: "${MockData.alerts.length}", label: "Alertas Hoje"),
-          ],
-        ),
-        const SizedBox(height: 24),
-
-        // Cabeçalho de Contatos
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('CONTATOS CONFIÁVEIS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: theme.colorScheme.onSurfaceVariant, letterSpacing: 0.8)),
-            TextButton.icon(
-              onPressed: showAddDialog,
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text("Adicionar"),
-              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            Expanded(
+              child: GlassCard(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.notifications_outlined, size: 20, color: AppColors.atencao),
+                    const SizedBox(height: 10),
+                    Text('${alerts.length}',
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.branco)),
+                    Text('Alertas do mês', style: TextStyle(fontSize: 11.5, color: AppColors.brancoDim)),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
-        const SizedBox(height: 8),
+
+        const SizedBox(height: 26),
+        LabelCaps('Contatos confiáveis'),
+        const SizedBox(height: 10),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
-            children: ["Família", "Escola", "Amigos"].map((cat) {
-              final selected = cat == selectedCategory;
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(
-                  label: Text(cat),
-                  selected: selected,
-                  onSelected: (_) {
-                    HapticFeedback.lightImpact();
-                    setState(() => selectedCategory = cat);
-                  },
-                ),
-              );
-            }).toList(),
+            children: _grupos
+                .map((g) => Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GradientChip(
+                label: g,
+                ativo: g == grupoSelecionado,
+                onTap: () => setState(() => grupoSelecionado = g),
+              ),
+            ))
+                .toList(),
           ),
         ),
-        const SizedBox(height: 12),
-
-        if (filtered.isEmpty)
+        const SizedBox(height: 10),
+        if (contatosGrupo.isEmpty)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 32),
-            child: Column(
-              children: [
-                Icon(Icons.person_add_alt_1_outlined, size: 40, color: theme.colorScheme.onSurfaceVariant.withOpacity(0.5)),
-                const SizedBox(height: 12),
-                Text('Nenhum contato em "$selectedCategory"', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
-              ],
-            ),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text('Nenhum contato neste grupo ainda.', style: TextStyle(color: AppColors.brancoDim, fontSize: 13)),
           )
         else
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: filtered.length,
-            itemBuilder: (context, idx) {
-              final c = filtered[idx];
-              return ContactCard(
-                contact: c,
-                onDelete: () {
-                  HapticFeedback.mediumImpact();
-                  setState(() => contacts.remove(c));
-                },
-              );
-            },
-          ),
-        const SizedBox(height: 20),
+          ...contatosGrupo.map((c) => Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.navy2.withOpacity(0.5),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.borda.withOpacity(0.6)),
+            ),
+            child: Row(
+              children: [
+                InitialsAvatar(initials: c.initials, size: 40, solid: false),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(c.name, style: const TextStyle(fontSize: 13.5, color: AppColors.branco)),
+                      Text(c.relation, style: TextStyle(fontSize: 11.5, color: AppColors.brancoDim)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          )),
 
-        // Alertas Recentes
+        const SizedBox(height: 26),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text("ALERTAS RECENTES", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: theme.colorScheme.onSurfaceVariant, letterSpacing: 0.8)),
-            if (widget.onVerTodosAlertas != null)
-              TextButton(onPressed: widget.onVerTodosAlertas, child: const Text("Ver todos")),
+            LabelCaps('Alertas recentes'),
+            TextButton(
+              onPressed: widget.onVerTodosAlertas,
+              style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero),
+              child: const Text('Ver todos', style: TextStyle(fontSize: 12.5, color: AppColors.azulPastel)),
+            ),
           ],
         ),
-        const SizedBox(height: 8),
-        ...MockData.alerts.take(3).map((a) => AlertCard(alert: a, onTap: () => _showAlertDetail(a))),
+        const SizedBox(height: 10),
+        ...alerts.take(3).map((a) => Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => showAlertDetailSheet(context, a, onVerTodos: widget.onVerTodosAlertas),
+            child: GlassCard(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text('${a.child} · ${a.app}',
+                            style: const TextStyle(fontSize: 13.5, color: AppColors.branco)),
+                      ),
+                      RiskBadge(risk: a.level),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(a.description, style: TextStyle(fontSize: 12.5, color: AppColors.brancoDim)),
+                  const SizedBox(height: 8),
+                  Text(a.time, style: TextStyle(fontSize: 11, color: AppColors.brancoDim.withOpacity(0.7))),
+                ],
+              ),
+            ),
+          ),
+        )),
       ],
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final IconData icon; final String value, label;
-  const _StatCard({required this.icon, required this.value, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 24, color: theme.primaryColor),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, letterSpacing: -0.5)),
-                Text(label, style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
-              ],
-            )
-          ],
-        ),
-      ),
     );
   }
 }

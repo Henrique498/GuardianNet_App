@@ -1,271 +1,218 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
-import 'home_shell.dart';
+import '../theme/app_theme.dart';
 
-class ChildPairingScreen extends StatefulWidget {
-  const ChildPairingScreen({super.key});
+class PairingScreen extends StatefulWidget {
+  const PairingScreen({super.key});
 
   @override
-  State<ChildPairingScreen> createState() => _ChildPairingScreenState();
+  State<PairingScreen> createState() => _PairingScreenState();
 }
 
-class _ChildPairingScreenState extends State<ChildPairingScreen> {
+class _PairingScreenState extends State<PairingScreen> {
   static const String baseUrl = 'https://proteempreenda.onrender.com/api/pairing';
 
-  final nameCtrl = TextEditingController();
-  final List<TextEditingController> digitCtrls = List.generate(6, (_) => TextEditingController());
-  final List<FocusNode> digitNodes = List.generate(6, (_) => FocusNode());
-
   bool loading = false;
-  String? errorMsg;
+  String? codigo;
+  String? erro;
+  Duration restante = Duration.zero;
+  Timer? _timer;
 
   @override
   void dispose() {
-    nameCtrl.dispose();
-    for (final c in digitCtrls) {
-      c.dispose();
-    }
-    for (final n in digitNodes) {
-      n.dispose();
-    }
+    _timer?.cancel();
     super.dispose();
   }
 
-  String get _codigo => digitCtrls.map((c) => c.text).join();
-
-  Future<void> _confirmar() async {
-    final nome = nameCtrl.text.trim();
-    final codigo = _codigo;
-
-    if (nome.length < 2) {
-      setState(() => errorMsg = 'Digite seu nome para continuar.');
-      return;
-    }
-    if (codigo.length != 6) {
-      setState(() => errorMsg = 'Digite os 6 números do código.');
-      return;
-    }
-
+  Future<void> _gerarCodigo() async {
     setState(() {
       loading = true;
-      errorMsg = null;
+      erro = null;
     });
-
     try {
-      // LOG DE DIAGNÓSTICO: O que o app está tentando enviar
-      debugPrint('--- INICIANDO REQUISIÇÃO DE PAREAMENTO ---');
-      debugPrint('URL: $baseUrl/redeem');
-      debugPrint('Payload enviado: {"codigo": "$codigo", "nome": "$nome"}');
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('gn_token') ?? '';
 
       final resp = await http.post(
-        Uri.parse('$baseUrl/redeem'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'codigo': codigo, 'nome': nome}),
+        Uri.parse('$baseUrl/generate'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
       );
-
-      // LOG DE DIAGNÓSTICO: Resposta bruta do servidor
-      debugPrint('STATUS CODE DO SERVIDOR: ${resp.statusCode}');
-      debugPrint('CORPO DA RESPOSTA (RAW BODY): ${resp.body}');
-      debugPrint('---------------------------------------');
-
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
 
       if (resp.statusCode == 201 && data['ok'] == true) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('gn_token', data['token'] ?? '');
-        await prefs.setString('gn_tipo', 'crianca');
-        await prefs.setString('gn_nome', (data['nome'] ?? nome).toString());
-        await prefs.setString('gn_responsavel_nome', (data['responsavelNome'] ?? '').toString());
-
-        if (!mounted) return;
-        HapticFeedback.mediumImpact();
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomeShell()));
-      } else {
-        // Se houver um erro detalhado enviado pelo servidor, ele prioriza. Caso contrário, mostra o texto padrão.
+        final minutos = (data['expiraEmMinutos'] ?? 10) as int;
         setState(() {
-          errorMsg = data['error']?.toString() ?? 'Código inválido ou expirado. Confira e tente de novo.';
+          codigo = (data['codigo'] ?? '').toString();
+          restante = Duration(minutes: minutos);
         });
+        _iniciarContagem();
+      } else {
+        setState(() => erro = data['error']?.toString() ?? 'Não foi possível gerar o código.');
       }
-    } catch (e, stackTrace) {
-      // LOG DE DIAGNÓSTICO: Se o Flutter falhar antes de bater na API ou der timeout
-      debugPrint('ERRO CAPTURADO NO CATCH: $e');
-      debugPrint('STACKTRACE DO ERRO: $stackTrace');
-      debugPrint('---------------------------------------');
-
-      setState(() => errorMsg = 'Sem conexão ou erro interno: $e');
+    } catch (_) {
+      setState(() => erro = 'Sem conexão. Tente novamente.');
     } finally {
       if (mounted) setState(() => loading = false);
     }
   }
 
-  Widget _digitBox(int index) {
-    final theme = Theme.of(context);
-    return SizedBox(
-      width: 44,
-      height: 54,
-      child: KeyboardListener(
-        focusNode: FocusNode(), // Captura eventos de tecla física/virtual
-        onKeyEvent: (KeyEvent event) {
-          // Detecta o botão de apagar (Backspace) para voltar o quadradinho caso esteja vazio
-          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.backspace) {
-            if (digitCtrls[index].text.isEmpty && index > 0) {
-              digitCtrls[index - 1].clear();
-              digitNodes[index - 1].requestFocus();
-            }
-          }
-        },
-        child: TextField(
-          controller: digitCtrls[index],
-          focusNode: digitNodes[index],
-          textAlign: TextAlign.center,
-          keyboardType: TextInputType.text, // Permite visualizar melhor números/letras se a fonte mudar
-          textCapitalization: TextCapitalization.characters,
-          inputFormatters: [
-            LengthLimitingTextInputFormatter(1),
-            UpperCaseTextFormatter(), // Garante que tudo digitado fique em caixa alta interna
-          ],
-          maxLength: 1,
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          decoration: InputDecoration(
-            counterText: '',
-            filled: true,
-            fillColor: theme.primaryColor.withOpacity(0.06),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: theme.primaryColor.withOpacity(0.25)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: theme.primaryColor, width: 2),
-            ),
-          ),
-          onChanged: (v) {
-            if (v.isNotEmpty && index < 5) {
-              digitNodes[index + 1].requestFocus();
-            }
-            if (errorMsg != null) setState(() => errorMsg = null);
-          },
-        ),
-      ),
-    );
+  void _iniciarContagem() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (restante.inSeconds <= 1) {
+        t.cancel();
+        setState(() => restante = Duration.zero);
+        return;
+      }
+      setState(() => restante -= const Duration(seconds: 1));
+    });
   }
+
+  void _copiar() {
+    if (codigo == null) return;
+    Clipboard.setData(ClipboardData(text: codigo!));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Código copiado!')));
+  }
+
+  String get _tempoFormatado {
+    final m = restante.inMinutes.toString().padLeft(2, '0');
+    final s = (restante.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  bool get _expirado => codigo != null && restante == Duration.zero;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GlassCard(
+          glow: true,
           padding: const EdgeInsets.all(24),
           child: Column(
             children: [
-              const SizedBox(height: 12),
               Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: theme.primaryColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Icon(Icons.diversity_1, color: theme.primaryColor, size: 34),
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(color: AppColors.navy3, borderRadius: BorderRadius.circular(16)),
+                child: const Icon(Icons.smartphone_outlined, color: AppColors.azulPastel, size: 24),
               ),
               const SizedBox(height: 16),
-              const Text('Entrar com código', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
-              const Text(
-                'Peça para seu responsável abrir o app dele\ne gerar um código para você.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 28),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Seu nome', style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold)),
-              ),
+              const Text('Conecte o celular da criança',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.branco)),
               const SizedBox(height: 8),
-              TextField(
-                controller: nameCtrl,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(
-                  hintText: 'Como podemos te chamar?',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.face_outlined),
-                ),
+              Text(
+                'Abra o GuardianNet no dispositivo infantil e digite o código abaixo.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: AppColors.brancoDim, height: 1.5),
               ),
-              const SizedBox(height: 24),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Código de 6 dígitos',
-                    style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(6, _digitBox),
-              ),
-              if (errorMsg != null) ...[
+              if (erro != null) ...[
                 const SizedBox(height: 16),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.error_outline, color: Colors.red, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                Text(erro!, style: const TextStyle(color: AppColors.perigo, fontSize: 13), textAlign: TextAlign.center),
+              ],
+              if (codigo != null) ...[
+                const SizedBox(height: 22),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: codigo!
+                      .split('')
+                      .map((d) => Container(
+                    width: 44,
+                    height: 52,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppColors.navy3,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppColors.borda),
+                    ),
+                    child: Text(
+                      _expirado ? '–' : d,
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.branco),
+                    ),
+                  ))
+                      .toList(),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _expirado ? 'Código expirado' : 'Expira em $_tempoFormatado',
+                  style: TextStyle(fontSize: 12, color: AppColors.brancoDim),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlineButtonCustom(
+                        text: 'Copiar',
+                        icon: Icons.copy_rounded,
+                        onPressed: _expirado ? null : _copiar,
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: GradientButton(
+                        label: 'Novo código',
+                        icon: Icons.refresh_rounded,
+                        loading: loading,
+                        onPressed: loading ? null : _gerarCodigo,
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                const SizedBox(height: 20),
+                GradientButton(
+                  label: 'Gerar código de 6 dígitos',
+                  loading: loading,
+                  onPressed: loading ? null : _gerarCodigo,
                 ),
               ],
-              const SizedBox(height: 28),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: theme.primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                  ),
-                  onPressed: loading ? null : _confirmar,
-                  child: loading
-                      ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
-                  )
-                      : const Text('Entrar', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextButton(
-                onPressed: loading ? null : () => Navigator.pop(context),
-                child: const Text('Sou um responsável, voltar ao login'),
-              ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-// Formatador auxiliar para forçar caixa alta se necessário
-class UpperCaseTextFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
-    return TextEditingValue(
-      text: newValue.text.toUpperCase(),
-      selection: newValue.selection,
+        const SizedBox(height: 22),
+        ...[
+          'Instale o GuardianNet no celular da criança.',
+          'Toque em "Sou uma criança" e informe o código.',
+          'Explique juntos como a proteção funciona e confirme o consentimento.',
+        ].asMap().entries.map(
+              (e) => Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.navy2.withOpacity(0.5),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: AppColors.borda.withOpacity(0.6)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(color: AppColors.navy, shape: BoxShape.circle),
+                  child: Text('${e.key + 1}',
+                      style: const TextStyle(fontSize: 11, color: AppColors.azulPastel, fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(e.value, style: TextStyle(fontSize: 13, color: AppColors.brancoDim, height: 1.4)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
